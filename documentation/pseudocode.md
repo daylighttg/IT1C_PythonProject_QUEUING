@@ -1,23 +1,29 @@
+# Queue System Pseudocode
 
+
+---
 
 ## 1. DATABASE MODULE (`core/database.py`)
 
 ```
-FUNCTION initialize_database():
+FUNCTION create_tables():
     CONNECT to SQLite file "queue_system.db"
-    
-    IF table "queue" does NOT exist THEN
-        CREATE TABLE queue WITH columns:
-            - id          : INTEGER, PRIMARY KEY, auto-increment
-            - ticket_no   : TEXT, unique ticket identifier
-            - name        : TEXT, customer name
-            - status      : TEXT  ("waiting" | "serving" | "done")
-            - joined_at   : DATETIME, timestamp when customer joined
-            - called_at   : DATETIME, timestamp when customer was called
-            - done_at     : DATETIME, timestamp when service completed
-    END IF
-    
-    RETURN database connection
+    CREATE TABLE customers IF NOT EXISTS with columns:
+        - id         : INTEGER, PRIMARY KEY, auto-increment
+        - ticket     : TEXT, generated ticket (Q###)
+        - name       : TEXT, customer name
+        - status     : TEXT  (waiting | serving | done)
+        - priority   : INTEGER (0=Regular, 1=Priority, 2=VIP)
+        - created_at : TIMESTAMP default CURRENT_TIMESTAMP
+    CLOSE connection
+END FUNCTION
+
+FUNCTION enqueue_customer(name, waiting_status, ticket_prefix, ticket_width, priority):
+    INSERT record with empty ticket
+    ticket_id ← last inserted row id
+    ticket    ← ticket_prefix + zero_pad(ticket_id, ticket_width)
+    UPDATE record with generated ticket
+    RETURN ticket
 END FUNCTION
 ```
 
@@ -28,40 +34,44 @@ END FUNCTION
 ### 2a. Join Queue
 
 ```
-FUNCTION join_queue(name):
-    IF name is empty or blank THEN
-        RAISE InvalidNameException("Name cannot be empty")
+FUNCTION join_queue(name, priority=0):
+    VALIDATE name is non-empty string
+    VALIDATE priority in {0,1,2}
+    IF duplicate waiting names are blocked AND name already waiting THEN
+        RAISE QueueError
     END IF
 
-    ticket_no  ← GENERATE ticket (e.g., "T-001", auto-incremented)
-    joined_at  ← CURRENT timestamp
-    status     ← "waiting"
-
-    INSERT record (ticket_no, name, status, joined_at) INTO queue table
-
-    RETURN ticket_no
+    ticket ← enqueue_customer(name, "waiting", "Q", 3, priority)
+    RETURN ticket
 END FUNCTION
 ```
 
-### 2b. Call Next Customer
+### 2b. Call Next Customer (Priority + Time Decay)
 
 ```
 FUNCTION call_next():
-    IF any customer currently has status = "serving" THEN
-        RAISE QueueBusyException("Finish current customer before calling next")
+    IF any customer has status = "serving" THEN
+        RAISE QueueFullError("already serving")
     END IF
 
-    next_customer ← SELECT first record WHERE status = "waiting"
-                    ORDER BY joined_at ASC
-
-    IF next_customer does NOT exist THEN
-        RAISE EmptyQueueException("No customers are waiting")
+    waiting_rows ← list_waiting("waiting")  // (ticket, name, created_at, priority)
+    IF waiting_rows is empty THEN
+        RETURN None
     END IF
 
-    called_at ← CURRENT timestamp
-    UPDATE next_customer SET status = "serving", called_at = called_at
+    FOR each row IN waiting_rows:
+        waited_seconds ← now - parse_time(created_at)
+        IF waited_seconds >= 600 THEN
+            effective_priority ← min(priority + 1, 2)
+        ELSE
+            effective_priority ← priority
+        END IF
+    END FOR
 
-    RETURN next_customer
+    ORDER rows by effective_priority DESC, created_at ASC
+    next_ticket ← first row.ticket
+    UPDATE that row status -> "serving"
+    RETURN (next_ticket, name)
 END FUNCTION
 ```
 
@@ -69,179 +79,76 @@ END FUNCTION
 
 ```
 FUNCTION mark_done():
-    current_customer ← SELECT record WHERE status = "serving"
-
-    IF current_customer does NOT exist THEN
-        RAISE NoServingCustomerException("No customer is currently being served")
+    serving_row ← first row WHERE status = "serving"
+    IF serving_row does NOT exist THEN
+        RETURN None
     END IF
-
-    done_at ← CURRENT timestamp
-    UPDATE current_customer SET status = "done", done_at = done_at
-
-    RETURN current_customer
+    UPDATE serving_row status -> "done"
+    RETURN (ticket, name)
 END FUNCTION
 ```
 
-### 2d. View Waiting Queue
+### 2d. Waiting, History, Stats, and Utilities
 
 ```
-FUNCTION get_waiting_queue():
-    records ← SELECT all records WHERE status = "waiting"
-               ORDER BY joined_at ASC
-
-    RETURN records   // empty list if no one is waiting
+FUNCTION get_waiting():
+    RETURN list_waiting("waiting")  // ordered by priority DESC, created_at ASC
 END FUNCTION
-```
 
-### 2e. Get Queue Status
-
-```
-FUNCTION get_status():
-    serving_customer ← SELECT record WHERE status = "serving"
-    waiting_count    ← COUNT records WHERE status = "waiting"
-
-    RETURN {
-        "serving"       : serving_customer (or None),
-        "waiting_count" : waiting_count
-    }
+FUNCTION get_serving():
+    RETURN current serving row or None
 END FUNCTION
-```
 
-### 2f. View Full History
-
-```
 FUNCTION get_history():
-    records ← SELECT all records FROM queue table
-               ORDER BY joined_at DESC
-
-    RETURN records
+    RETURN all rows ordered by id ASC
 END FUNCTION
-```
 
-### 2g. Delete a Record
+FUNCTION get_stats():
+    RETURN counts for waiting, serving, done, plus total
+END FUNCTION
 
-```
+FUNCTION get_waiting_position(ticket):
+    RETURN number of waiting customers ahead of ticket
+END FUNCTION
+
+FUNCTION edit_record(record_id, priority):
+    VALIDATE record_id and priority
+    UPDATE record priority
+    RETURN (ticket, name) or None if missing
+END FUNCTION
+
 FUNCTION delete_record(record_id):
-    IF record with record_id does NOT exist THEN
-        RAISE RecordNotFoundException("Record not found")
-    END IF
-
-    DELETE record WHERE id = record_id
-    RETURN success message
+    DELETE record by id
+    RETURN (ticket, name) or None if missing
 END FUNCTION
-```
 
-### 2h. Clear All Records
-
-```
 FUNCTION clear_all_records():
-    DELETE all records FROM queue table
-    RESET auto-increment counter
-
-    RETURN success message
+    DELETE all rows
+    RETURN count deleted
 END FUNCTION
 ```
 
 ---
 
-## 3. COMMAND-LINE INTERFACE (`main.py`)
+## 3. GUI APPLICATION (`main.py`)
 
 ```
 FUNCTION main():
-    CALL initialize_database()
+    create_tables()
+    START Tkinter app
 
-    LOOP forever:
-        DISPLAY menu:
-            [1] Join Queue
-            [2] Call Next Customer
-            [3] Mark Customer as Done
-            [4] View Waiting Queue
-            [5] View Full History
-            [6] Delete a Record
-            [7] Clear All Records
-            [0] Exit
+    UI actions:
+        Join Queue         -> join_queue(name, priority)
+        Call Next          -> call_next()
+        Mark Done          -> mark_done()
+        Edit Record        -> edit_record(record_id, priority)
+        Delete Record      -> delete_record(record_id)
+        Clear All Records  -> clear_all_records()
+        Refresh            -> get_waiting(), get_history(), get_stats()
 
-        choice ← GET user input
-
-        MATCH choice:
-
-            CASE 1:
-                name ← GET user input ("Enter customer name: ")
-                TRY
-                    ticket ← join_queue(name)
-                    DISPLAY "Joined! Your ticket number is: " + ticket
-                CATCH InvalidNameException as e:
-                    DISPLAY "Error: " + e.message
-                END TRY
-
-            CASE 2:
-                TRY
-                    customer ← call_next()
-                    DISPLAY "Now serving: " + customer.name
-                             + " (Ticket: " + customer.ticket_no + ")"
-                CATCH QueueBusyException, EmptyQueueException as e:
-                    DISPLAY "Error: " + e.message
-                END TRY
-
-            CASE 3:
-                TRY
-                    customer ← mark_done()
-                    DISPLAY "Done serving: " + customer.name
-                CATCH NoServingCustomerException as e:
-                    DISPLAY "Error: " + e.message
-                END TRY
-
-            CASE 4:
-                queue ← get_waiting_queue()
-                IF queue is empty THEN
-                    DISPLAY "No customers are waiting."
-                ELSE
-                    FOR each customer IN queue:
-                        DISPLAY customer.ticket_no + " | " + customer.name
-                              + " | Joined: " + customer.joined_at
-                    END FOR
-                END IF
-
-            CASE 5:
-                history ← get_history()
-                IF history is empty THEN
-                    DISPLAY "No records found."
-                ELSE
-                    FOR each record IN history:
-                        DISPLAY record.id + " | " + record.ticket_no
-                              + " | " + record.name + " | " + record.status
-                    END FOR
-                END IF
-
-            CASE 6:
-                record_id ← GET user input ("Enter record ID to delete: ")
-                TRY
-                    delete_record(record_id)
-                    DISPLAY "Record deleted successfully."
-                CATCH RecordNotFoundException as e:
-                    DISPLAY "Error: " + e.message
-                END TRY
-
-            CASE 7:
-                confirm ← GET user input ("Clear ALL records? (yes/no): ")
-                IF confirm = "yes" THEN
-                    clear_all_records()
-                    DISPLAY "All records cleared."
-                ELSE
-                    DISPLAY "Operation cancelled."
-                END IF
-
-            CASE 0:
-                DISPLAY "Goodbye!"
-                EXIT loop
-
-            DEFAULT:
-                DISPLAY "Invalid choice. Please try again."
-        END MATCH
-    END LOOP
+    OPTIONAL:
+        Start/Stop Flask server (subprocess)
 END FUNCTION
-
-CALL main()
 ```
 
 ---
@@ -250,61 +157,39 @@ CALL main()
 
 ```
 FUNCTION start_api_server():
-    CALL initialize_database()
+    create_tables()
+    READ ADMIN_API_KEY from environment (default: "changeme")
     CREATE Flask app
 
-    // ── POST /join ──────────────────────────────────────────────
     ENDPOINT POST "/join":
-        body ← PARSE JSON request body
+        body ← JSON
         name ← body["name"]
+        priority ← body.get("priority", 0)
+        ticket ← join_queue(name, priority)
+        position ← get_waiting_position(ticket)
+        RETURN {ticket, name, priority, position}, status 201
 
-        TRY
-            ticket ← join_queue(name)
-            RETURN JSON { "ticket_no": ticket, "message": "Joined queue" }, status 201
-        CATCH InvalidNameException as e:
-            RETURN JSON { "error": e.message }, status 400
-        END TRY
-
-    // ── GET /queue ───────────────────────────────────────────────
     ENDPOINT GET "/queue":
-        waiting ← get_waiting_queue()
-        RETURN JSON list of waiting customers, status 200
+        waiting ← get_waiting()
+        RETURN {waiting: [...], count: N}
 
-    // ── GET /status ──────────────────────────────────────────────
     ENDPOINT GET "/status":
-        status ← get_status()
-        RETURN JSON {
-            "serving"       : status.serving,
-            "waiting_count" : status.waiting_count
-        }, status 200
+        serving ← get_serving()
+        waiting_count ← count_waiting()
+        RETURN {serving, waiting: waiting_count}
 
-    // ── POST /next ───────────────────────────────────────────────
-    ENDPOINT POST "/next":
-        TRY
-            customer ← call_next()
-            RETURN JSON { "now_serving": customer }, status 200
-        CATCH QueueBusyException, EmptyQueueException as e:
-            RETURN JSON { "error": e.message }, status 400
-        END TRY
+    ENDPOINT POST "/next" (requires X-API-Key):
+        result ← call_next()
+        RETURN {ticket, name} OR error
 
-    // ── POST /done ───────────────────────────────────────────────
-    ENDPOINT POST "/done":
-        TRY
-            customer ← mark_done()
-            RETURN JSON { "completed": customer }, status 200
-        CATCH NoServingCustomerException as e:
-            RETURN JSON { "error": e.message }, status 400
-        END TRY
+    ENDPOINT POST "/done" (requires X-API-Key):
+        result ← mark_done()
+        RETURN {ticket, name} OR error
 
-    // ── GET /history ─────────────────────────────────────────────
     ENDPOINT GET "/history":
         history ← get_history()
-        RETURN JSON list of all records, status 200
-
-    RUN Flask app on host="0.0.0.0", port=5000
+        RETURN {records: [...], count: N}
 END FUNCTION
-
-CALL start_api_server()
 ```
 
 ---
@@ -312,11 +197,11 @@ CALL start_api_server()
 ## 5. CUSTOM EXCEPTIONS (`core/exceptions.py`)
 
 ```
-CLASS InvalidNameException        EXTENDS Exception
-CLASS EmptyQueueException         EXTENDS Exception
-CLASS QueueBusyException          EXTENDS Exception
-CLASS NoServingCustomerException  EXTENDS Exception
-CLASS RecordNotFoundException     EXTENDS Exception
+CLASS QueueError        EXTENDS RuntimeError
+CLASS QueueFullError    EXTENDS QueueError
+CLASS QueueEmptyError   EXTENDS QueueError
+CLASS DatabaseError     EXTENDS QueueError
+CLASS PriorityError     EXTENDS QueueError
 ```
 
 ---
@@ -325,36 +210,20 @@ CLASS RecordNotFoundException     EXTENDS Exception
 
 ```
 START
-  │
-  ▼
-Initialize Database (create tables if needed)
-  │
-  ▼
-User selects interface:
-  ├── CLI  ──► Show Menu ──► User picks action
-  └── API  ──► Listen on port 5000 ──► Receive HTTP request
-                                          │
-                            ┌────────────▼─────────────┐
-                            │    Core Queue Logic       │
-                            │  (queue_logic.py)         │
-                            │                           │
-                            │  join_queue()             │
-                            │  call_next()              │
-                            │  mark_done()              │
-                            │  get_waiting_queue()      │
-                            │  get_status()             │
-                            │  get_history()            │
-                            │  delete_record()          │
-                            │  clear_all_records()      │
-                            └────────────┬─────────────┘
-                                         │
-                            ┌────────────▼─────────────┐
-                            │    SQLite Database        │
-                            │  (queue_system.db)        │
-                            └──────────────────────────┘
+  |
+  v
+Create DB tables
+  |
+  v
+User chooses entry point:
+  - GUI  -> Tkinter UI actions
+  - API  -> Flask server endpoints
+  |
+  v
+Core queue logic (priority + time decay)
+  |
+  v
+SQLite database
 END
 ```
 
----
-
-*Generated from: https://github.com/aira112507/IT1C_PythonProject_QUEUING*
