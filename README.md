@@ -127,7 +127,7 @@ The server listens on `http://0.0.0.0:5000`. Other devices on the same network c
 
 ### System Overview
 
-![Queue System Flowchart](images/Screenshot.png)
+![Queue System Screeshot](images/img.png)
 
 #### API Endpoints
 
