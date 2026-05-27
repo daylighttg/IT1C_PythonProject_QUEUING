@@ -4,12 +4,12 @@ This document describes the queue system business logic in pseudocode form. It m
 
 ## Status Constants
 
-- `WAITING_STATUS = "waiting"`
-- `SERVING_STATUS = "serving"`
-- `DONE_STATUS = "done"`
-- `TICKET_PREFIX = "Q"`
-- `TICKET_NUMBER_WIDTH = 3`
-
+- `WAITING_STATUS = "**waiting**"
+- `SERVING_STATUS = "**serving**"
+- `DONE_STATUS = "**done**"
+- `TICKET_PREFIX = "**Q**"
+- `TICKET_NUMBER_WIDTH = **3**
+---
 ## Repository Interface
 
 The queue service depends on a repository that supports these operations:
@@ -31,7 +31,7 @@ The queue service depends on a repository that supports these operations:
 - `count_records() -> int`
 - `clear_all_records() -> None`
 - `exists_waiting_name(name, status) -> bool`
-
+---
 ## Common Validation
 
 ```pseudocode
@@ -58,7 +58,7 @@ function validate_record_id(record_id):
         raise QueueError("Record ID must be greater than zero.")
     return record_id
 ```
-
+---
 ## Join Queue
 
 ```pseudocode
@@ -77,7 +77,7 @@ function join_queue(customer_name):
 
     return ticket
 ```
-
+---
 ## Call Next Customer
 
 ```pseudocode
@@ -93,7 +93,7 @@ function call_next():
     repository.update_status(id, SERVING_STATUS)
     return (ticket, name)
 ```
-
+---
 ## Mark Current Customer Done
 
 ```pseudocode
@@ -106,7 +106,7 @@ function mark_done():
     repository.update_status(id, DONE_STATUS)
     return (ticket, name)
 ```
-
+---
 ## Query Functions
 
 ```pseudocode
@@ -125,9 +125,9 @@ function get_all_records():
 function count_waiting():
     return repository.count_by_status(WAITING_STATUS)
 ```
-
+---
 ## Statistics
-
+---
 ```pseudocode
 function get_stats():
     counts = {
@@ -145,7 +145,7 @@ function get_stats():
     counts["total"] = total
     return counts
 ```
-
+---
 ## Get Waiting Position
 
 ```pseudocode
@@ -156,7 +156,7 @@ function get_waiting_position(ticket):
         return 0
     return repository.count_waiting_before(customer_id, WAITING_STATUS)
 ```
-
+---
 ## Delete Record
 
 ```pseudocode
