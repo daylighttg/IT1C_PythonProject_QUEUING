@@ -1,199 +1,360 @@
-# Queue System - Explained in Simple Terms
 
-This document breaks down how the queue system works. It's basically like a ticket system at the bank or DMV—people join, get served, and then they're done!
 
----
-
-## The Basics
-
-Here are the three states a customer can be in:
-
-- `WAITING_STATUS = "waiting"` — They're in line, waiting for their turn
-- `SERVING_STATUS = "serving"` — They're being helped right now
-- `DONE_STATUS = "done"` — They're finished and done
-- `TICKET_PREFIX = "Q"` — All tickets start with the letter "Q" (like Q001, Q002, etc.)
-- `TICKET_NUMBER_WIDTH = 3` — Tickets are padded to 3 digits
-
----
-
-## What the Database Can Do
-
-The system needs a way to store and retrieve customer info. Here are the things we ask the database to do:
-
-- **Add a customer** to the queue with their name and status
-- **Find the first person** waiting or being served
-- **Check if anyone** is in a particular status
-- **Change someone's status** (like from waiting to serving)
-- **Show me** all the people waiting
-- **Tell me** who's currently being served
-- **Show me** the history of completed customers
-- **Count how many** people are waiting
-- **Get statistics** about all status groups
-- **Find a customer** by their ticket number
-- **Tell me** how many people are ahead in line
-- **Look up** a customer's ticket and name
-- **Remove** a customer record
-- **Count everything** in the database
-- **Wipe the slate clean** and delete all records
-- **Check if** someone with the same name is already waiting
-
----
-
-## Checking That Input Makes Sense
-
-Before we do anything, we need to make sure the data is good:
+## 1. DATABASE MODULE (`core/database.py`)
 
 ```
-When someone gives us a name:
-    - Is it actually text? (not a number or something weird)
-    - Remove any extra spaces from the start/end
-    - Is it empty? Nope, not allowed!
-    - If all checks pass, use the cleaned-up name
-
-When someone gives us a ticket number:
-    - Is it text?
-    - Clean up any extra spaces
-    - Can't be empty!
-    - If good, we're ready to use it
-
-When someone gives us a customer ID number:
-    - Must actually be a whole number (not text, not true/false)
-    - Can't be zero or negative—must be a real ID number
-    - If it checks out, we're good to go
+FUNCTION initialize_database():
+    CONNECT to SQLite file "queue_system.db"
+    
+    IF table "queue" does NOT exist THEN
+        CREATE TABLE queue WITH columns:
+            - id          : INTEGER, PRIMARY KEY, auto-increment
+            - ticket_no   : TEXT, unique ticket identifier
+            - name        : TEXT, customer name
+            - status      : TEXT  ("waiting" | "serving" | "done")
+            - joined_at   : DATETIME, timestamp when customer joined
+            - called_at   : DATETIME, timestamp when customer was called
+            - done_at     : DATETIME, timestamp when service completed
+    END IF
+    
+    RETURN database connection
+END FUNCTION
 ```
 
 ---
 
-## Joining the Queue
+## 2. QUEUE LOGIC MODULE (`core/queue_logic.py`)
 
-Here's what happens when a new customer arrives:
+### 2a. Join Queue
 
 ```
-When a customer wants to join the queue:
-    1. Clean up their name (remove spaces, check it's valid)
-    2. If we don't allow duplicates, check if they're already waiting
-    3. If they are already there, tell them "sorry, you're already in line!"
-    4. If not, give them a ticket number and mark them as "waiting"
-    5. Give them their ticket so they know where they are in line
+FUNCTION join_queue(name):
+    IF name is empty or blank THEN
+        RAISE InvalidNameException("Name cannot be empty")
+    END IF
+
+    ticket_no  ← GENERATE ticket (e.g., "T-001", auto-incremented)
+    joined_at  ← CURRENT timestamp
+    status     ← "waiting"
+
+    INSERT record (ticket_no, name, status, joined_at) INTO queue table
+
+    RETURN ticket_no
+END FUNCTION
+```
+
+### 2b. Call Next Customer
+
+```
+FUNCTION call_next():
+    IF any customer currently has status = "serving" THEN
+        RAISE QueueBusyException("Finish current customer before calling next")
+    END IF
+
+    next_customer ← SELECT first record WHERE status = "waiting"
+                    ORDER BY joined_at ASC
+
+    IF next_customer does NOT exist THEN
+        RAISE EmptyQueueException("No customers are waiting")
+    END IF
+
+    called_at ← CURRENT timestamp
+    UPDATE next_customer SET status = "serving", called_at = called_at
+
+    RETURN next_customer
+END FUNCTION
+```
+
+### 2c. Mark Customer as Done
+
+```
+FUNCTION mark_done():
+    current_customer ← SELECT record WHERE status = "serving"
+
+    IF current_customer does NOT exist THEN
+        RAISE NoServingCustomerException("No customer is currently being served")
+    END IF
+
+    done_at ← CURRENT timestamp
+    UPDATE current_customer SET status = "done", done_at = done_at
+
+    RETURN current_customer
+END FUNCTION
+```
+
+### 2d. View Waiting Queue
+
+```
+FUNCTION get_waiting_queue():
+    records ← SELECT all records WHERE status = "waiting"
+               ORDER BY joined_at ASC
+
+    RETURN records   // empty list if no one is waiting
+END FUNCTION
+```
+
+### 2e. Get Queue Status
+
+```
+FUNCTION get_status():
+    serving_customer ← SELECT record WHERE status = "serving"
+    waiting_count    ← COUNT records WHERE status = "waiting"
+
+    RETURN {
+        "serving"       : serving_customer (or None),
+        "waiting_count" : waiting_count
+    }
+END FUNCTION
+```
+
+### 2f. View Full History
+
+```
+FUNCTION get_history():
+    records ← SELECT all records FROM queue table
+               ORDER BY joined_at DESC
+
+    RETURN records
+END FUNCTION
+```
+
+### 2g. Delete a Record
+
+```
+FUNCTION delete_record(record_id):
+    IF record with record_id does NOT exist THEN
+        RAISE RecordNotFoundException("Record not found")
+    END IF
+
+    DELETE record WHERE id = record_id
+    RETURN success message
+END FUNCTION
+```
+
+### 2h. Clear All Records
+
+```
+FUNCTION clear_all_records():
+    DELETE all records FROM queue table
+    RESET auto-increment counter
+
+    RETURN success message
+END FUNCTION
 ```
 
 ---
 
-## Calling the Next Customer
-
-Time to serve someone!
+## 3. COMMAND-LINE INTERFACE (`main.py`)
 
 ```
-When we call the next customer:
-    1. First, check if someone is already being served
-    2. If yes, tell the staff member "finish with this customer first!"
-    3. If no one is being served, find the first person waiting
-    4. If no one's waiting either, say "the queue is empty"
-    5. When you find them, change their status from "waiting" to "serving"
-    6. Tell the staff who they are and their ticket number
+FUNCTION main():
+    CALL initialize_database()
+
+    LOOP forever:
+        DISPLAY menu:
+            [1] Join Queue
+            [2] Call Next Customer
+            [3] Mark Customer as Done
+            [4] View Waiting Queue
+            [5] View Full History
+            [6] Delete a Record
+            [7] Clear All Records
+            [0] Exit
+
+        choice ← GET user input
+
+        MATCH choice:
+
+            CASE 1:
+                name ← GET user input ("Enter customer name: ")
+                TRY
+                    ticket ← join_queue(name)
+                    DISPLAY "Joined! Your ticket number is: " + ticket
+                CATCH InvalidNameException as e:
+                    DISPLAY "Error: " + e.message
+                END TRY
+
+            CASE 2:
+                TRY
+                    customer ← call_next()
+                    DISPLAY "Now serving: " + customer.name
+                             + " (Ticket: " + customer.ticket_no + ")"
+                CATCH QueueBusyException, EmptyQueueException as e:
+                    DISPLAY "Error: " + e.message
+                END TRY
+
+            CASE 3:
+                TRY
+                    customer ← mark_done()
+                    DISPLAY "Done serving: " + customer.name
+                CATCH NoServingCustomerException as e:
+                    DISPLAY "Error: " + e.message
+                END TRY
+
+            CASE 4:
+                queue ← get_waiting_queue()
+                IF queue is empty THEN
+                    DISPLAY "No customers are waiting."
+                ELSE
+                    FOR each customer IN queue:
+                        DISPLAY customer.ticket_no + " | " + customer.name
+                              + " | Joined: " + customer.joined_at
+                    END FOR
+                END IF
+
+            CASE 5:
+                history ← get_history()
+                IF history is empty THEN
+                    DISPLAY "No records found."
+                ELSE
+                    FOR each record IN history:
+                        DISPLAY record.id + " | " + record.ticket_no
+                              + " | " + record.name + " | " + record.status
+                    END FOR
+                END IF
+
+            CASE 6:
+                record_id ← GET user input ("Enter record ID to delete: ")
+                TRY
+                    delete_record(record_id)
+                    DISPLAY "Record deleted successfully."
+                CATCH RecordNotFoundException as e:
+                    DISPLAY "Error: " + e.message
+                END TRY
+
+            CASE 7:
+                confirm ← GET user input ("Clear ALL records? (yes/no): ")
+                IF confirm = "yes" THEN
+                    clear_all_records()
+                    DISPLAY "All records cleared."
+                ELSE
+                    DISPLAY "Operation cancelled."
+                END IF
+
+            CASE 0:
+                DISPLAY "Goodbye!"
+                EXIT loop
+
+            DEFAULT:
+                DISPLAY "Invalid choice. Please try again."
+        END MATCH
+    END LOOP
+END FUNCTION
+
+CALL main()
 ```
 
 ---
 
-## Marking a Customer as Done
-
-When the service is finished:
+## 4. REST API SERVER (`api/server.py`)
 
 ```
-When a customer is finished:
-    1. Find whoever is currently being served
-    2. If no one is being served, there's nothing to do—say "no one being served"
-    3. When you find them, change their status from "serving" to "done"
-    4. Log their info so we know they were here
-```
+FUNCTION start_api_server():
+    CALL initialize_database()
+    CREATE Flask app
 
----
+    // ── POST /join ──────────────────────────────────────────────
+    ENDPOINT POST "/join":
+        body ← PARSE JSON request body
+        name ← body["name"]
 
-## Looking Up Information
+        TRY
+            ticket ← join_queue(name)
+            RETURN JSON { "ticket_no": ticket, "message": "Joined queue" }, status 201
+        CATCH InvalidNameException as e:
+            RETURN JSON { "error": e.message }, status 400
+        END TRY
 
-These are quick ways to check the queue:
+    // ── GET /queue ───────────────────────────────────────────────
+    ENDPOINT GET "/queue":
+        waiting ← get_waiting_queue()
+        RETURN JSON list of waiting customers, status 200
 
-```
-Show me everyone waiting right now
-Show me who's currently being served
-Show me the history of everyone who was served today
-Show me absolutely everyone (waiting, serving, and done)
-Tell me the total number of people waiting
-```
+    // ── GET /status ──────────────────────────────────────────────
+    ENDPOINT GET "/status":
+        status ← get_status()
+        RETURN JSON {
+            "serving"       : status.serving,
+            "waiting_count" : status.waiting_count
+        }, status 200
 
----
+    // ── POST /next ───────────────────────────────────────────────
+    ENDPOINT POST "/next":
+        TRY
+            customer ← call_next()
+            RETURN JSON { "now_serving": customer }, status 200
+        CATCH QueueBusyException, EmptyQueueException as e:
+            RETURN JSON { "error": e.message }, status 400
+        END TRY
 
-## Getting the Big Picture
+    // ── POST /done ───────────────────────────────────────────────
+    ENDPOINT POST "/done":
+        TRY
+            customer ← mark_done()
+            RETURN JSON { "completed": customer }, status 200
+        CATCH NoServingCustomerException as e:
+            RETURN JSON { "error": e.message }, status 400
+        END TRY
 
-Here's how we create a summary of what's happening:
+    // ── GET /history ─────────────────────────────────────────────
+    ENDPOINT GET "/history":
+        history ← get_history()
+        RETURN JSON list of all records, status 200
 
-```
-When we want statistics:
-    1. Create a counter that starts at 0 for each status
-    2. Go through all the customers in the database
-    3. Add them up by their status (waiting, serving, done)
-    4. Calculate the total of everyone
-    5. Return a nice summary showing all the numbers
-```
+    RUN Flask app on host="0.0.0.0", port=5000
+END FUNCTION
 
----
-
-## Where's My Spot in Line?
-
-If a customer wants to know their position:
-
-```
-When someone asks "where am I in line?":
-    1. Take their ticket number and look it up
-    2. Find their customer ID
-    3. If they're not in the system, they're not in line (position = 0)
-    4. If they are there, count how many people are ahead of them
-    5. Tell them their position
-```
-
----
-
-## Removing Someone from the Queue
-
-Maybe they changed their mind or we need to remove a record:
-
-```
-When we need to delete a customer:
-    1. Make sure the ID number is valid
-    2. Look them up in the database
-    3. If they don't exist, say "I can't find them"
-    4. If they do exist, remove them
-    5. Tell the staff what we removed
+CALL start_api_server()
 ```
 
 ---
 
-## Starting Fresh
-
-When we need to clear everything out:
+## 5. CUSTOM EXCEPTIONS (`core/exceptions.py`)
 
 ```
-When we want to wipe the database clean:
-    1. Count how many customers are in the system
-    2. If there are any, delete them all
-    3. Return how many we deleted (so staff knows something happened)
+CLASS InvalidNameException        EXTENDS Exception
+CLASS EmptyQueueException         EXTENDS Exception
+CLASS QueueBusyException          EXTENDS Exception
+CLASS NoServingCustomerException  EXTENDS Exception
+CLASS RecordNotFoundException     EXTENDS Exception
 ```
 
 ---
 
-## What the System Exposes to Users
+## 6. SYSTEM FLOW SUMMARY
 
-These are all the commands the staff can use:
+```
+START
+  │
+  ▼
+Initialize Database (create tables if needed)
+  │
+  ▼
+User selects interface:
+  ├── CLI  ──► Show Menu ──► User picks action
+  └── API  ──► Listen on port 5000 ──► Receive HTTP request
+                                          │
+                            ┌────────────▼─────────────┐
+                            │    Core Queue Logic       │
+                            │  (queue_logic.py)         │
+                            │                           │
+                            │  join_queue()             │
+                            │  call_next()              │
+                            │  mark_done()              │
+                            │  get_waiting_queue()      │
+                            │  get_status()             │
+                            │  get_history()            │
+                            │  delete_record()          │
+                            │  clear_all_records()      │
+                            └────────────┬─────────────┘
+                                         │
+                            ┌────────────▼─────────────┐
+                            │    SQLite Database        │
+                            │  (queue_system.db)        │
+                            └──────────────────────────┘
+END
+```
 
-- Join queue with a name
-- Call the next customer
-- Mark someone as done
-- View waiting customers
-- View current customer being served
-- View completed customers
-- View everyone (all statuses)
-- Count how many are waiting
-- Get statistics/summary
-- Check position in line
-- Delete a customer record
-- Clear all records
+---
+
+*Generated from: https://github.com/aira112507/IT1C_PythonProject_QUEUING*
