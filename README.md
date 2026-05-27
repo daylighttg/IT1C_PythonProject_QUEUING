@@ -1,4 +1,4 @@
-# Queue System
+# Queue Management System
 
 A Python-based queue management system with database persistence, featuring a command-line interface and a REST API. Perfect for managing customer queues in retail, healthcare, service centers, and more.
 
