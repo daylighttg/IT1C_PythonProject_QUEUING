@@ -389,7 +389,7 @@ class QueueSystemGUI:
         try:
             # Get the path to server.py
             server_path = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "api", "server.py"
+                os.path.dirname(__file__), "api", "server.py"
             )
 
             # Start the server as a subprocess
