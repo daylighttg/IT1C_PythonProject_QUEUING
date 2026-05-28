@@ -209,7 +209,7 @@ This project is open source. Please check the repository for license information
 ## Support
 
 For questions, issues, or feature requests:
-- Open an issue in the [GitHub repository](https://github.com/daylighttg/Queue_Sytem/issues)
+- Open an issue in the [GitHub repository](https://github.com/daylighttg/IT1C_PythonProject_QUEUING/issues)
 - Check existing issues before creating a new one
 
 ---
