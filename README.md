@@ -4,11 +4,11 @@ A Python-based queue management system with database persistence, featuring a co
 
 ## Group Members
 - [Justine Dela Peña](https://github.com/justine0806/My-fort-folio)
-- [Jex Malibiran](https://github.com/Yukihira-Kurozawa/My-Profile-)
+- [Jex Malibiran](https://github.com/Yukihira-Kurozawa/IT1C_Portfolio_Malibiran)
 - [Jeremih Gianzon](https://github.com/daylighttg/IT1C_Portfolio_Gianzon)
 - [Zyrenne Lucero](https://github.com/dokidawn/dokidawn)
-- [Aira Segovia](https://github.com/aira112507/readme-)
-- [Annadel Apolinario](https://github.com/anadelbagona/Ana)
+- [Aira Segovia](https://github.com/aira112507/IT1C_Portfolio_Segovia)
+- [Annadel Apolinario](https://github.com/anadelbagona/IT1C_Portfolio_Apolinario)
 
 
 ## Features
